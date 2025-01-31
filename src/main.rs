@@ -1,21 +1,8 @@
 use mnist::*;
 use ndarray::prelude::*;
-use serde::{Serialize, Deserialize};
-
-
-impl Network {
-    fn new(shape: Vec<usize>) -> Self {
-        let mut rng = rand::thread_rng();
-        let biases = shape[1..]
-            .iter()
-            .map(|&y| Array2::random_using((y, 1), rand::distributions::StandardNormal, &mut rng))
-            .map(|&y| Array2::random((y, 1), rand::distributions::StandardNormal))
-        let weights = shape.windows(2)
-            .map(|w| Array2::random_using((w[1], w[0]), rand::distributions::StandardNormal, &mut rng))
-            .map(|w| Array2::random((w[1], w[0]), rand::distributions::StandardNormal))
-        Network { shape, biases, weights }
-    }
-}
+use ndarray_rand::RandomExt; // Make sure RandomExt is imported
+use ndarray_rand::rand_distr::Uniform;
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 struct Network {
@@ -24,10 +11,33 @@ struct Network {
     weights: Vec<Array2<f64>>,
 }
 
+impl Network {
+    fn new(shape: Vec<usize>) -> Self {
+        let mut weights = Vec::new();
+        let mut biases = Vec::new();
+
+        let uniform = Uniform::new(0.0, 1.0);
+
+        for i in 1..shape.len() {
+            let weight_matrix = Array2::<f64>::random((shape[i], shape[i - 1]), uniform.clone());
+            let bias_matrix = Array2::<f64>::random((shape[i], 1), uniform.clone());
+            weights.push(weight_matrix);
+            biases.push(bias_matrix);
+        }
+
+        Network {
+            shape,
+            biases,
+            weights,
+        }
+    }
+}
+
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let nework = Network::new(args.split(',').map(|x| x.parse().unwrap()).collect());
-
+    let network = Network::new(args[1].split(',').map(|x| x.parse().unwrap()).collect());
+    save_network(network);
     let Mnist {
         trn_img,
         trn_lbl,
@@ -61,10 +71,14 @@ fn main() {
         .map(|x| *x as f32);
 }
 
-
 fn save_network(network: Network) {
-    let shape = network.shape.iter().map(usize::to_string).collect::<Vec<String>>().join(",");
+    let shape = network
+        .shape
+        .iter()
+        .map(usize::to_string)
+        .collect::<Vec<String>>()
+        .join(",");
     let json = serde_json::to_string(&network).unwrap();
     let date = chrono::Local::now().format("%Y-%m-%d").to_string();
-    std::fs::write(format!("{}-{}.json", shape, date), json).unwrap();
+    std::fs::write(format!("./models/{}-{}.json", shape, date), json).unwrap();
 }

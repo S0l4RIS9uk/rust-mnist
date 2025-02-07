@@ -1,3 +1,5 @@
+extern crate blas_src;
+
 use std::f64;
 
 use rand::rng;
@@ -110,7 +112,6 @@ fn main() {
 
 fn feedforward(network: &Network, mut a: Array2<f64>) -> Array2<f64> {
     for (weight, bias) in network.weights.iter().zip(network.biases.iter()) {
-
         let weighted_input = weight.dot(&a) + bias;
         a = sigmoid(&weighted_input);
     }

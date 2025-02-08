@@ -229,6 +229,18 @@ struct Args {
     /// Flag for listing available networks
     #[arg(short = 'L', long, default_value_t = false)]
     list: bool,
+
+    /// Epochs to train the network
+    #[arg(short, long, default_value = "30")]
+    epochs: usize,
+
+    /// Batch size for training the network
+    #[arg(short, long, default_value = "10")]
+    batch_size: usize,
+
+    /// Training rate for the network
+    #[arg(short, long, default_value = "0.01")]
+    training_rate: f64,
 }
 
 fn main() {
@@ -254,6 +266,22 @@ fn main() {
             .split(',')
             .map(|s| s.parse().expect("Invalid network shape"))
             .collect();
+
+        if (shape.len() < 2) {
+            eprintln!("Network shape must have at least two layers.");
+            return;
+        }
+
+        let model_dir = Path::new("./models");
+        if model_dir.exists() {
+            let entries = fs::read_dir(model_dir).expect("Unable to read model directory");
+            for entry in entries.filter_map(Result::ok) {
+            if entry.file_name().into_string().unwrap().starts_with(&shape_str) && entry.file_name().into_string().unwrap().ends_with(".json") {
+                eprintln!("A network with the specified shape already exists. Archive it or delete it.");
+                return;
+            }
+            }
+        }
 
         println!("Creating a new network with shape {:?}", shape);
         network = Network::new(shape);
@@ -318,7 +346,7 @@ fn main() {
         })
         .collect();
 
-    network.stochastic_gradient_descent(train_data_tuples, 30, 10, 0.01, Some(test_data_tuples));
+    network.stochastic_gradient_descent(train_data_tuples, args.epochs, args.batch_size, args.training_rate, Some(test_data_tuples));
 }
 
 fn load_network(path: &str) -> Network {

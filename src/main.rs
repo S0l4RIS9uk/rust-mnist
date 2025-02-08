@@ -66,7 +66,7 @@ impl Network {
     ) {
         for i in 0..epochs {
             training_data.shuffle(&mut rng());
-            for batch in training_data.chunks(batch_size) {
+            for (batch_index, batch) in training_data.chunks(batch_size).enumerate() {
                 self.update_batch(batch, training_rate);
             }
 
@@ -153,24 +153,23 @@ impl Network {
             activations.push(activation.clone());
         }
 
-        let delta = self.cost_derivative(activations.last().unwrap(), &classifications)
+        let mut delta = self.cost_derivative(activations.last().unwrap(), &classifications)
             * sigmoid_prime(weighted_inputs.last().unwrap());
-        let nbiases = self.biases.len();
-        let nweights = self.weights.len();
 
-        nabla_b[nbiases - 1]
-            .slice_mut(s![0, ..])
-            .assign(&delta.sum_axis(Axis(0)));
-        nabla_w[nbiases - 1] = activations[activations.len() - 2].t().dot(&delta);
-        for l in 2..self.shape.len() {
-            let z = &weighted_inputs[weighted_inputs.len() - l];
+        let last_layer = self.weights.len() - 1;
+        nabla_b[last_layer].slice_mut(s![0, ..]).assign(&delta.sum_axis(Axis(0)));
+        nabla_w[last_layer] = activations[activations.len() - 2].t().dot(&delta);
+
+        // Backpropagate through hidden layers
+        for l in (0..last_layer).rev() {
+            let z = &weighted_inputs[l];
             let sp = sigmoid_prime(z);
-            let delta = delta.dot(&self.weights[nweights - l + 1].t()) * sp;
-            nabla_b[nbiases - l]
-                .slice_mut(s![0, ..])
-                .assign(&delta.sum_axis(Axis(0)));
-            nabla_w[nweights - l] = activations[activations.len() - l - 1].t().dot(&delta);
+            delta = delta.dot(&self.weights[l + 1].t()) * sp;
+            
+            nabla_b[l].slice_mut(s![0, ..]).assign(&delta.sum_axis(Axis(0)));
+            nabla_w[l] = activations[l].t().dot(&delta);
         }
+        
         (nabla_b, nabla_w)
     }
 

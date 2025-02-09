@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MNIST Prediction Viewer</title>
+    <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            let predictions = [];
+            let viewMode = "random";
+
+            function fetchPredictions() {
+                const endpoint = viewMode === "random" ? "/api/random" : "/api/misclassified";
+                fetch(endpoint)
+                    .then(response => response.json())
+                    .then(data => {
+                        predictions = data;
+                        renderPredictions();
+                    });
+            }
+
+            function renderDigit(imageData) {
+                const canvas = document.createElement("canvas");
+                const ctx = canvas.getContext("2d");
+                canvas.width = 28;
+                canvas.height = 28;
+                const imageArray = new Uint8ClampedArray(28 * 28 * 4);
+
+                for (let i = 0; i < imageData.length; i++) {
+                    const value = Math.floor(imageData[i] * 255);
+                    imageArray[i * 4] = value;
+                    imageArray[i * 4 + 1] = value;
+                    imageArray[i * 4 + 2] = value;
+                    imageArray[i * 4 + 3] = 255;
+                }
+
+                const imgData = new ImageData(imageArray, 28, 28);
+                ctx.putImageData(imgData, 0, 0);
+                return canvas.toDataURL();
+            }
+
+            function renderPredictions() {
+                const container = document.getElementById("predictions-container");
+                container.innerHTML = "";
+                
+                predictions.forEach(pred => {
+                    const predDiv = document.createElement("div");
+                    predDiv.className = "prediction-box";
+                    predDiv.innerHTML = `
+                        <div class="info">
+                            <span><strong>Prediction:</strong> ${pred.predicted_label}</span>
+                            <span><strong>Actual:</strong> ${pred.true_label}</span>
+                        </div>
+                        <img src="${renderDigit(pred.image)}" class="digit-image">
+                        <div class="chart-container">
+                            <canvas class="chart" width="300" height="180"></canvas>
+                        </div>
+                    `;
+                    container.appendChild(predDiv);
+                    renderChart(predDiv.querySelector(".chart"), pred.confidences);
+                });
+            }
+
+            function renderChart(canvas, confidences) {
+                const ctx = canvas.getContext("2d");
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                const barWidth = 25;
+                const maxHeight = 150;
+                const maxConfidence = Math.max(...confidences);
+                confidences.forEach((confidence, index) => {
+                    const height = (confidence / maxConfidence) * maxHeight;
+                    ctx.fillStyle = "#4299e1";
+                    ctx.fillRect(index * (barWidth + 5), canvas.height - height, barWidth, height);
+                });
+            }
+
+            document.getElementById("random-btn").addEventListener("click", function () {
+                viewMode = "random";
+                fetchPredictions();
+            });
+            document.getElementById("misclassified-btn").addEventListener("click", function () {
+                viewMode = "misclassified";
+                fetchPredictions();
+            });
+            document.getElementById("refresh-btn").addEventListener("click", fetchPredictions);
+
+            fetchPredictions();
+        });
+    </script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        .controls {
+            margin-bottom: 20px;
+        }
+        .prediction-box {
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin: 10px;
+            display: inline-block;
+            text-align: center;
+        }
+        .digit-image {
+            width: 100px;
+            height: 100px;
+            image-rendering: pixelated;
+        }
+        .chart-container {
+            width: 300px;
+            height: 180px;
+        }
+    </style>
+</head>
+<body>
+    <h1>MNIST Prediction Viewer</h1>
+    <div class="controls">
+        <button id="random-btn">Random Examples</button>
+        <button id="misclassified-btn">Misclassified Examples</button>
+        <button id="refresh-btn">Refresh</button>
+    </div>
+    <div id="predictions-container"></div>
+</body>
+</html>

@@ -1,17 +1,21 @@
 extern crate blas_src;
 
+mod web;
+
 use std::{f64, fs, path::Path};
 
 use clap::Parser;
 use rand::rng;
 use rand::seq::SliceRandom;
-
 use mnist::*;
 use ndarray::prelude::*;
 use ndarray_rand::rand_distr::Uniform;
 use ndarray_rand::RandomExt;
-
+use rand::prelude::IteratorRandom;
 use serde::{Deserialize, Serialize};
+use web::PredictionResponse;
+
+
 #[derive(Serialize, Deserialize)]
 struct Network {
     performance: f64,
@@ -91,13 +95,13 @@ impl Network {
         let mut nabla_b: Vec<Array2<f64>> = self
             .biases
             .iter()
-            .map(|b| Array2::<f64>::zeros(b.raw_dim())) 
+            .map(|b| Array2::<f64>::zeros(b.raw_dim()))
             .collect();
 
         let mut nabla_w: Vec<Array2<f64>> = self
             .weights
             .iter()
-            .map(|w| Array2::<f64>::zeros(w.raw_dim())) 
+            .map(|w| Array2::<f64>::zeros(w.raw_dim()))
             .collect();
 
         let (delta_nabla_b, delta_nabla_w) = self.backprop(batch);
@@ -126,13 +130,13 @@ impl Network {
         let mut nabla_b: Vec<Array2<f64>> = self
             .biases
             .iter()
-            .map(|b| Array2::<f64>::zeros(b.raw_dim())) 
+            .map(|b| Array2::<f64>::zeros(b.raw_dim()))
             .collect();
 
         let mut nabla_w: Vec<Array2<f64>> = self
             .weights
             .iter()
-            .map(|w| Array2::<f64>::zeros(w.raw_dim())) 
+            .map(|w| Array2::<f64>::zeros(w.raw_dim()))
             .collect();
 
         let mut activation = Array2::<f64>::zeros((batch.len(), self.shape[0]));
@@ -157,7 +161,9 @@ impl Network {
             * sigmoid_prime(weighted_inputs.last().unwrap());
 
         let last_layer = self.weights.len() - 1;
-        nabla_b[last_layer].slice_mut(s![0, ..]).assign(&delta.sum_axis(Axis(0)));
+        nabla_b[last_layer]
+            .slice_mut(s![0, ..])
+            .assign(&delta.sum_axis(Axis(0)));
         nabla_w[last_layer] = activations[activations.len() - 2].t().dot(&delta);
 
         // Backpropagate through hidden layers
@@ -165,11 +171,13 @@ impl Network {
             let z = &weighted_inputs[l];
             let sp = sigmoid_prime(z);
             delta = delta.dot(&self.weights[l + 1].t()) * sp;
-            
-            nabla_b[l].slice_mut(s![0, ..]).assign(&delta.sum_axis(Axis(0)));
+
+            nabla_b[l]
+                .slice_mut(s![0, ..])
+                .assign(&delta.sum_axis(Axis(0)));
             nabla_w[l] = activations[l].t().dot(&delta);
         }
-        
+
         (nabla_b, nabla_w)
     }
 
@@ -203,6 +211,56 @@ impl Network {
 
     fn cost_derivative(&self, output_activations: &Array2<f64>, y: &Array2<f64>) -> Array2<f64> {
         output_activations - y
+    }
+
+    pub fn get_random_predictions(&self, test_data: &Vec<(Array1<f64>, Array1<f64>)>) -> Vec<PredictionResponse> {
+        /* let random_samples = test_data.choose_multiple(&mut rng, 10).cloned().collect(); */
+        let random_samples = test_data.iter().choose_multiple(&mut rng(), 10);
+        random_samples
+            .into_iter()
+            .map(|(image, true_label)| {
+                let output = self.feedforward(image.clone().insert_axis(Axis(0)));
+                let predicted_label = output
+                    .iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                    .map(|(idx, _)| idx as u8)
+                    .unwrap_or(0);
+
+                PredictionResponse {
+                    image: image.to_vec(),
+                    predicted_label,
+                    true_label: true_label.iter().position(|&x| x == 1.0).unwrap_or(0) as u8,
+                    confidences: output.iter().map(|&x| x as f32).collect(),
+                    is_correct: predicted_label == true_label.iter().position(|&x| x == 1.0).unwrap_or(0) as u8,
+                }
+            })
+            .collect()
+    }
+
+    pub fn get_misclassified(&self, test_data: &Vec<(Array1<f64>, Array1<f64>)> ) -> Vec<PredictionResponse> {
+        test_data
+            .iter()
+            .map(|(image, true_label)| {
+                let output = self.feedforward(image.clone().insert_axis(Axis(0)));
+                let predicted_label = output
+                    .iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                    .map(|(idx, _)| idx as u8)
+                    .unwrap_or(0);
+                let true_index = true_label.iter().position(|&x| x == 1.0).unwrap_or(0) as u8;
+                
+                PredictionResponse {
+                    image: image.to_vec(),
+                    predicted_label,
+                    true_label: true_index,
+                    confidences: output.iter().map(|&x| x as f32).collect(),
+                    is_correct: predicted_label == true_index,
+                }
+            })
+            .filter(|pred| !pred.is_correct).choose_multiple(&mut rng(), 10)
+
     }
 }
 
@@ -240,6 +298,10 @@ struct Args {
     /// Training rate for the network
     #[arg(short, long, default_value = "0.01")]
     training_rate: f64,
+
+    /// Start the web viewer
+    #[arg(short, long, default_value_t = false)]
+    web: bool,
 }
 
 fn main() {
@@ -275,10 +337,16 @@ fn main() {
         if model_dir.exists() {
             let entries = fs::read_dir(model_dir).expect("Unable to read model directory");
             for entry in entries.filter_map(Result::ok) {
-            if entry.file_name().into_string().unwrap().starts_with(&shape_str) && entry.file_name().into_string().unwrap().ends_with(".json") {
-                eprintln!("A network with the specified shape already exists. Archive it or delete it.");
-                return;
-            }
+                if entry
+                    .file_name()
+                    .into_string()
+                    .unwrap()
+                    .starts_with(&shape_str)
+                    && entry.file_name().into_string().unwrap().ends_with(".json")
+                {
+                    eprintln!("A network with the specified shape already exists. Archive it or delete it.");
+                    return;
+                }
             }
         }
 
@@ -345,7 +413,18 @@ fn main() {
         })
         .collect();
 
-    network.stochastic_gradient_descent(train_data_tuples, args.epochs, args.batch_size, args.training_rate, Some(test_data_tuples));
+    if args.web {
+        println!("Starting web interface...");
+        web::start_server(network, test_data_tuples).expect("Failed to start web server");
+    } else {
+        network.stochastic_gradient_descent(
+            train_data_tuples,
+            args.epochs,
+            args.batch_size,
+            args.training_rate,
+            Some(test_data_tuples),
+        );
+    }
 }
 
 fn load_network(path: &str) -> Network {
@@ -369,7 +448,13 @@ fn save_network(network: &Network) {
     let model_dir = Path::new("./models");
     if let Ok(entries) = fs::read_dir(model_dir) {
         for entry in entries.filter_map(Result::ok) {
-            if entry.file_name().into_string().unwrap().starts_with(&format!("{}-{}", shape_str, date)) && entry.file_name().into_string().unwrap().ends_with(".json") {
+            if entry
+                .file_name()
+                .into_string()
+                .unwrap()
+                .starts_with(&format!("{}-{}", shape_str, date))
+                && entry.file_name().into_string().unwrap().ends_with(".json")
+            {
                 fs::remove_file(entry.path()).expect("Failed to delete old network file");
             }
         }
